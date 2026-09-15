@@ -261,7 +261,7 @@ Detailed list of changes
 
 - dnd kitten: Add an option to use file copies instead of hard links for copy drops (:pull:`10412`)
 
-- transfer kitten: Add `KITTY_TRANSFER_DEBUG` tracing and a `--signature-timeout`
+- transfer kitten: Add ``KITTY_TRANSFER_DEBUG`` tracing and a ``--signature-timeout``
   guard for rsync signature generation so stalled delta negotiation can be
   diagnosed end-to-end
 
