@@ -639,11 +639,12 @@ func (self *SendHandler) arm_signature_timeout(file *File) {
 	}
 	self.cancel_signature_timeout()
 	timeout := signature_timeout(self.opts)
+	file_id := file.file_id
 	timer_id, err := self.lp.AddTimer(timeout, false, func(timer_id loop.IdType) error {
 		if self.signature_wait_timer == timer_id {
 			self.signature_wait_timer = 0
 		}
-		current := self.manager.fid_map[file.file_id]
+		current := self.manager.fid_map[file_id]
 		if current == nil || current.state != WAITING_FOR_DATA || self.manager.state == SEND_CANCELED || self.quit_after_write_code > -1 {
 			return nil
 		}
