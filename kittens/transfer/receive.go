@@ -466,13 +466,15 @@ func (self *manager) request_files() transmit_iterator {
 				}
 			}
 			output.flush()
+			data_end := FileTransmissionCommand{Action: Action_end_data, File_id: f.file_id}
+			last_write_id = self.send(data_end, queue_write)
+			output.amt += int64(len(self.prefix) + len(self.suffix) + len(data_end.Serialize(false)))
 			transfer_debugf(
-				"receive: completed rsync signature generation for %s in %s (%d flushes, %s generated, %s sent), sending data_end",
+				"receive: completed rsync signature generation for %s in %s (%d flushes, %s generated, %s sent including data_end)",
 				f.display_name, humanize.ShortDuration(time.Since(output.started_at)), output.flushes,
 				humanize.Size(output.total_signature_bytes), humanize.Size(output.amt),
 			)
 			f.sent_bytes += output.amt
-			last_write_id = self.send(FileTransmissionCommand{Action: Action_end_data, File_id: f.file_id}, queue_write)
 		}
 		return
 	}
