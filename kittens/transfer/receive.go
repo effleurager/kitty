@@ -362,10 +362,24 @@ type sigwriter struct {
 	q                       func(string) loop.IdType
 	amt                     int64
 	b                       bytes.Buffer
+	file_name               string
+	flushes                 int
+	total_signature_bytes   int64
+	started_at              time.Time
+	last_logged_at          time.Time
 }
 
 func (self *sigwriter) Write(b []byte) (int, error) {
+	self.total_signature_bytes += int64(len(b))
 	self.b.Write(b)
+	now := time.Now()
+	if should_log_signature_progress(self.last_logged_at, now, false) {
+		transfer_debugf(
+			"receive: still generating rsync signature for %s (%s buffered, %s total generated)",
+			self.file_name, humanize.Size(self.b.Len()), humanize.Size(self.total_signature_bytes),
+		)
+		self.last_logged_at = now
+	}
 	if self.b.Len() > 4000 {
 		self.flush()
 	}
@@ -373,6 +387,9 @@ func (self *sigwriter) Write(b []byte) (int, error) {
 }
 
 func (self *sigwriter) flush() {
+	if self.b.Len() == 0 {
+		return
+	}
 	frame := len(self.prefix) + len(self.suffix)
 	split_for_transfer(self.b.Bytes(), self.file_id, false, func(ftc *FileTransmissionCommand) {
 		self.q(self.prefix)
@@ -381,6 +398,15 @@ func (self *sigwriter) flush() {
 		self.wid = self.q(self.suffix)
 		self.amt += int64(frame + len(data))
 	})
+	self.flushes++
+	now := time.Now()
+	if should_log_signature_progress(self.last_logged_at, now, false) {
+		transfer_debugf(
+			"receive: flushed rsync signature progress for %s (%d flushes, %s sent)",
+			self.file_name, self.flushes, humanize.Size(self.amt),
+		)
+		self.last_logged_at = now
+	}
 	self.b.Reset()
 }
 
@@ -422,7 +448,14 @@ func (self *manager) request_files() transmit_iterator {
 			defer fsf.Close()
 			f.expect_diff = true
 			f.patcher = rsync.NewPatcher(f.expected_size)
-			output := sigwriter{q: queue_write, file_id: f.file_id, prefix: self.prefix, suffix: self.suffix}
+			transfer_debugf(
+				"receive: starting rsync signature generation for %s (%s, timeout=%s)",
+				f.display_name, humanize.Size(f.expected_size), signature_timeout(self.cli_opts),
+			)
+			output := sigwriter{
+				q: queue_write, file_id: f.file_id, prefix: self.prefix, suffix: self.suffix,
+				file_name: f.display_name, started_at: time.Now(), last_logged_at: time.Now(),
+			}
 			s_it := f.patcher.CreateSignatureIterator(fsf, &output)
 			for {
 				err = s_it()
@@ -433,6 +466,11 @@ func (self *manager) request_files() transmit_iterator {
 				}
 			}
 			output.flush()
+			transfer_debugf(
+				"receive: completed rsync signature generation for %s in %s (%d flushes, %s generated, %s sent), sending data_end",
+				f.display_name, humanize.ShortDuration(time.Since(output.started_at)), output.flushes,
+				humanize.Size(output.total_signature_bytes), humanize.Size(output.amt),
+			)
 			f.sent_bytes += output.amt
 			last_write_id = self.send(FileTransmissionCommand{Action: Action_end_data, File_id: f.file_id}, queue_write)
 		}

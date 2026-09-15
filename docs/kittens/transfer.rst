@@ -83,5 +83,12 @@ differences between files. To turn it on use the :option:`--transmit-deltas
 actually be slower when transferring small files or on a very fast network, because
 of round trip overhead, so use with care.
 
+When diagnosing slow or stalled delta negotiation, use
+:option:`--signature-timeout <kitty +kitten transfer --signature-timeout>` to
+abort if rsync signature generation stops making progress before ``data_end`` is
+sent. Set the ``KITTY_TRANSFER_DEBUG`` environment variable to enable
+end-to-end tracing of signature generation and flush progress on both sides of
+the transfer.
+
 
 .. include:: ../generated/cli-kitten-transfer.rst

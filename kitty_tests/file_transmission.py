@@ -468,6 +468,7 @@ class TestFileTransmission(BaseTest):
         single_file()
         single_file()
         single_file('--transmit-deltas')
+        single_file('--transmit-deltas', '--signature-timeout=1s')
         with open(dest, 'wb') as d:
             d.write(os.urandom(1023))
         single_file('--transmit-deltas')

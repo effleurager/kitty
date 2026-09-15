@@ -261,6 +261,10 @@ Detailed list of changes
 
 - dnd kitten: Add an option to use file copies instead of hard links for copy drops (:pull:`10412`)
 
+- transfer kitten: Add `KITTY_TRANSFER_DEBUG` tracing and a `--signature-timeout`
+  guard for rsync signature generation so stalled delta negotiation can be
+  diagnosed end-to-end
+
 - Fix a malformed CSI escape sequence such as ``\e[?:`` corrupting the parser state so that subsequent SGR color codes are ignored (:iss:`10434`)
 
 - Graphics protocol: Fix a regression in 0.45.0 that caused the overwrite
