@@ -14,10 +14,18 @@ import (
 const signatureProgressLogInterval = 2 * time.Second
 
 func signature_timeout(opts *Options) time.Duration {
-	if opts == nil || opts.SignatureTimeout <= 0 {
+	d, err := parse_signature_timeout(opts)
+	if err != nil || d <= 0 {
 		return 30 * time.Second
 	}
-	return opts.SignatureTimeout
+	return d
+}
+
+func parse_signature_timeout(opts *Options) (time.Duration, error) {
+	if opts == nil || opts.SignatureTimeout == "" {
+		return 30 * time.Second, nil
+	}
+	return time.ParseDuration(opts.SignatureTimeout)
 }
 
 func should_log_signature_progress(last_logged_at, now time.Time, is_final bool) bool {

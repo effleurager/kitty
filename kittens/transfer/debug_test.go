@@ -33,8 +33,21 @@ func TestSignatureTimeoutDefault(t *testing.T) {
 	if got := signature_timeout(&Options{}); got != 30*time.Second {
 		t.Fatalf("expected default timeout for zero opts, got %s", got)
 	}
-	if got := signature_timeout(&Options{SignatureTimeout: 7 * time.Second}); got != 7*time.Second {
+	if got := signature_timeout(&Options{SignatureTimeout: "7s"}); got != 7*time.Second {
 		t.Fatalf("expected configured timeout, got %s", got)
+	}
+}
+
+func TestParseSignatureTimeout(t *testing.T) {
+	if _, err := parse_signature_timeout(&Options{SignatureTimeout: "abc"}); err == nil {
+		t.Fatal("expected invalid timeout to fail")
+	}
+	got, err := parse_signature_timeout(&Options{SignatureTimeout: "1500ms"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1500*time.Millisecond {
+		t.Fatalf("unexpected parsed duration: %s", got)
 	}
 }
 
