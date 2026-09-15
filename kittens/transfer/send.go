@@ -101,7 +101,9 @@ type File struct {
 	err_msg                                               string
 	actual_file                                           *os.File
 	transmitted_bytes, reported_progress                  int64
+	signature_bytes_received                              int64
 	transmit_started_at, transmit_ended_at, done_at       time.Time
+	last_signature_debug_log_at                           time.Time
 	differ                                                *rsync.Differ
 	delta_loader                                          func() error
 	deltabuf                                              *bytes.Buffer
@@ -409,6 +411,7 @@ type SendHandler struct {
 	transmit_ok_checked                  bool
 	progress_update_timer                loop.IdType
 	spinner                              *tui.Spinner
+	signature_wait_timer                 loop.IdType
 }
 
 func safe_divide[A constraints.Integer | constraints.Float, B constraints.Integer | constraints.Float](a A, b B) float64 {
@@ -622,6 +625,88 @@ func (self *SendHandler) refresh_progress(timer_id loop.IdType) (err error) {
 	return nil
 }
 
+func (self *SendHandler) cancel_signature_timeout() {
+	if self.signature_wait_timer != 0 {
+		self.lp.RemoveTimer(self.signature_wait_timer)
+		self.signature_wait_timer = 0
+	}
+}
+
+func (self *SendHandler) arm_signature_timeout(file *File) {
+	if file == nil || file.state != WAITING_FOR_DATA || self.manager.state == SEND_CANCELED {
+		self.cancel_signature_timeout()
+		return
+	}
+	self.cancel_signature_timeout()
+	timeout := signature_timeout(self.opts)
+	file_id := file.file_id
+	timer_id, err := self.lp.AddTimer(timeout, false, func(timer_id loop.IdType) error {
+		if self.signature_wait_timer == timer_id {
+			self.signature_wait_timer = 0
+		}
+		current := self.manager.fid_map[file_id]
+		if current == nil || current.state != WAITING_FOR_DATA || self.manager.state == SEND_CANCELED || self.quit_after_write_code > -1 {
+			return nil
+		}
+		transfer_debugf("send: timed out waiting for rsync signature data for %s after %s without data_end", current.display_name, timeout)
+		self.lp.Println(self.ctx.BrightRed(fmt.Sprintf(
+			"Timed out after %s waiting for rsync signature data for %s before data_end",
+			humanize.ShortDuration(timeout), current.display_name,
+		)))
+		self.abort_transfer()
+		return nil
+	})
+	if err == nil {
+		self.signature_wait_timer = timer_id
+	} else {
+		transfer_debugf("send: failed to arm rsync signature timeout for %s: %v", file.display_name, err)
+	}
+}
+
+func (self *SendHandler) trace_signature_wait(ftc *FileTransmissionCommand, file *File, prev_state FileState) {
+	if file == nil {
+		return
+	}
+	switch ftc.Action {
+	case Action_status:
+		if ftc.Status == `STARTED` && file.state == WAITING_FOR_DATA {
+			file.signature_bytes_received = 0
+			file.last_signature_debug_log_at = time.Now()
+			transfer_debugf(
+				"send: waiting for rsync signature data for %s (remote size=%s, timeout=%s)",
+				file.display_name, humanize.Size(utils.Max(int64(0), file.remote_initial_size)), signature_timeout(self.opts),
+			)
+			self.arm_signature_timeout(file)
+		} else if prev_state == WAITING_FOR_DATA && file.state != WAITING_FOR_DATA {
+			self.cancel_signature_timeout()
+		}
+	case Action_data, Action_end_data:
+		if prev_state != WAITING_FOR_DATA && file.state != WAITING_FOR_DATA && ftc.Action != Action_end_data {
+			return
+		}
+		now := time.Now()
+		if should_log_signature_progress(file.last_signature_debug_log_at, now, ftc.Action == Action_end_data) {
+			if ftc.Action == Action_end_data {
+				transfer_debugf(
+					"send: received final rsync signature data for %s (%s total), starting delta calculation",
+					file.display_name, humanize.Size(file.signature_bytes_received),
+				)
+			} else {
+				transfer_debugf(
+					"send: received rsync signature progress for %s (%s total, last chunk %s)",
+					file.display_name, humanize.Size(file.signature_bytes_received), humanize.Size(len(ftc.Data)),
+				)
+			}
+			file.last_signature_debug_log_at = now
+		}
+		if ftc.Action == Action_end_data || file.state != WAITING_FOR_DATA {
+			self.cancel_signature_timeout()
+		} else {
+			self.arm_signature_timeout(file)
+		}
+	}
+}
+
 func (self *SendHandler) schedule_progress_update(delay time.Duration) {
 	if self.progress_update_timer == 0 {
 		timer_id, err := self.lp.AddTimer(delay, false, self.refresh_progress)
@@ -715,6 +800,7 @@ func (self *SendManager) on_file_status_update(ftc *FileTransmissionCommand) err
 		} else {
 			if ftc.Ttype == TransmissionType_rsync {
 				file.state = WAITING_FOR_DATA
+				file.signature_bytes_received = 0
 			} else {
 				file.state = TRANSMITTING
 			}
@@ -780,6 +866,7 @@ func (self *SendManager) on_signature_data_received(ftc *FileTransmissionCommand
 	if err := file.differ.AddSignatureData(ftc.Data); err != nil {
 		return err
 	}
+	file.signature_bytes_received += int64(len(ftc.Data))
 	self.progress_tracker.signature_bytes += len(ftc.Data)
 	if ftc.Action == Action_end_data {
 		if err := file.differ.FinishSignatureData(); err != nil {
@@ -820,11 +907,20 @@ func (self *SendHandler) on_file_transfer_response(ftc *FileTransmissionCommand)
 	if self.quit_after_write_code > -1 || self.manager.state == SEND_CANCELED {
 		return nil
 	}
+	var file *File
+	prev_state := FINISHED
+	if ftc.File_id != "" {
+		file = self.manager.fid_map[ftc.File_id]
+		if file != nil {
+			prev_state = file.state
+		}
+	}
 	before := self.manager.state
 	err := self.manager.on_file_transfer_response(ftc)
 	if err != nil {
 		return err
 	}
+	self.trace_signature_wait(ftc, file, prev_state)
 	if before == SEND_WAITING_FOR_PERMISSION {
 		switch self.manager.state {
 		case SEND_PERMISSION_DENIED:
@@ -1109,6 +1205,7 @@ func (self *SendHandler) print_continue_msg() {
 }
 
 func (self *SendHandler) abort_transfer(delay ...time.Duration) {
+	self.cancel_signature_timeout()
 	d := 5 * time.Second
 	if len(delay) > 0 {
 		d = delay[0]
@@ -1271,6 +1368,7 @@ func send_loop(opts *Options, files []*File) (err error, rc int) {
 	if lp.ExitCode() != 0 {
 		rc = lp.ExitCode()
 	}
+	handler.cancel_signature_timeout()
 	return
 }
 

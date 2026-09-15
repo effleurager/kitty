@@ -51,6 +51,9 @@ func main(cmd *cli.Command, opts *Options, args []string) (rc int, err error) {
 		}
 		opts.PermissionsBypass = strings.TrimSpace(val)
 	}
+	if _, err := parse_signature_timeout(opts); err != nil {
+		return 1, fmt.Errorf("Invalid value for --signature-timeout: %w", err)
+	}
 	if len(args) == 0 {
 		return 1, fmt.Errorf("Must specify at least one file to transfer")
 	}
