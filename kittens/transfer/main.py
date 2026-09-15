@@ -117,6 +117,12 @@ If a file on the receiving side already exists, use the rsync algorithm to
 update it to match the file on the sending side, potentially saving lots of
 bandwidth and also automatically resuming partial transfers. Note that this will
 actually degrade performance on fast links or with small files, so use with care.
+
+
+--signature-timeout
+default=30s
+How long to wait without receiving any rsync signature data before aborting the
+transfer. Only applies while waiting for :code:`data_end` during delta-based transfers.
 """
 
 
